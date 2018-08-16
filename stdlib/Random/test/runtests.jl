@@ -1065,3 +1065,9 @@ end
         end
     end
 end
+
+@testset "rand(::Type{<:Pair})" begin
+    @test rand(Pair{Int,Int}) isa Pair{Int,Int}
+    @test rand(Pair{Int,Float64}) isa Pair{Int,Float64}
+    @test rand(Pair{Int,Float64}, 3) isa Array{Pair{Int,Float64}}
+end

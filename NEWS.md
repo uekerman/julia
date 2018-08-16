@@ -41,6 +41,8 @@ Standard library changes
 
 #### Random
 
+* `rand` now supports sampling over `Pair` types ([#28705]).
+
 #### REPL
 
 #### SuiteSparse
