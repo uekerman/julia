@@ -695,9 +695,11 @@ A (usually temporary) container for holding lowered source code.
     * 0x01 << 0 = statement is marked as `@inbounds`
     * 0x01 << 1 = statement is marked as `@inline`
     * 0x01 << 2 = statement is marked as `@noinline`
-    * 0x01 << 3 = statement is within a block that leads to `throw` call
-    * 0x01 << 4 = statement may be removed if its result is unused, in particular it is thus be both pure and effect free
-    * 0x01 << 5-6 = <unused>
+    * 0x01 << 3 = statement is "effect free", i.e. it may be removed if its result is unused,
+                  in particular it is thus be both `:nothrow` and `:effect_free`
+    * 0x01 << 4 = statement is "nothrow", i.e. it is proven not to `:throw`
+    * 0x01 << 5 = statement is "consistent", i.e. it does not taint `:consistent`-cy of the function
+    * 0x01 << 6 = <unused>
     * 0x01 << 7 = <reserved> has out-of-band info
 
   * `linetable`

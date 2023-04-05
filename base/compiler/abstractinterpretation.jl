@@ -11,15 +11,6 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
                                   arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype),
                                   sv::AbsIntState, max_methods::Int)
     ⊑ₚ = ⊑(ipo_lattice(interp))
-    if !should_infer_this_call(interp, sv)
-        add_remark!(interp, sv, "Skipped call in throw block")
-        # At this point we are guaranteed to end up throwing on this path,
-        # which is all that's required for :consistent-cy. Of course, we don't
-        # know anything else about this statement.
-        effects = Effects(; consistent=ALWAYS_TRUE)
-        return CallMeta(Any, effects, NoCallInfo())
-    end
-
     argtypes = arginfo.argtypes
     matches = find_matching_methods(typeinf_lattice(interp), argtypes, atype, method_table(interp),
         InferenceParams(interp).max_union_splitting, max_methods)
