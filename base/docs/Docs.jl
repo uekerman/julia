@@ -292,6 +292,16 @@ function unblock(@nospecialize ex)
     return unblock(exs[1])
 end
 
+# peek through ex to figure out what kind of expression it may eventually act like
+# but ignoring scopes and line numbers
+function unescape(@nospecialize ex)
+    ex = unblock(ex)
+    while isexpr(ex, :escape) || isexpr(ex, :var"hygienic-scope")
+       ex = unblock(ex.args[1])
+    end
+    return ex
+end
+
 uncurly(@nospecialize ex) = isexpr(ex, :curly) ? ex.args[1] : ex
 
 namify(@nospecialize x) = astname(x, isexpr(x, :macro))::Union{Symbol,Expr,GlobalRef}
@@ -351,18 +361,19 @@ function metadata(__source__, __module__, expr, ismodule)
         fields = P[]
         last_docstr = nothing
         for each in (expr.args[3]::Expr).args
-            if isa(each, Symbol) || isexpr(each, :(::))
+            eachex = unescape(each)
+            if isa(eachex, Symbol) || isexpr(eachex, :(::))
                 # a field declaration
                 if last_docstr !== nothing
-                    push!(fields, P(namify(each::Union{Symbol,Expr}), last_docstr))
+                    push!(fields, P(namify(eachex::Union{Symbol,Expr}), last_docstr))
                     last_docstr = nothing
                 end
-            elseif isexpr(each, :function) || isexpr(each, :(=))
+            elseif isexpr(eachex, :function) || isexpr(eachex, :(=))
                 break
-            elseif isa(each, String) || isexpr(each, :string) || isexpr(each, :call) ||
-                (isexpr(each, :macrocall) && each.args[1] === Symbol("@doc_str"))
+            elseif isa(eachex, String) || isexpr(eachex, :string) || isexpr(eachex, :call) ||
+                (isexpr(eachex, :macrocall) && eachex.args[1] === Symbol("@doc_str"))
                 # forms that might be doc strings
-                last_docstr = each::Union{String,Expr}
+                last_docstr = each
             end
         end
         dict = :($(Dict{Symbol,Any})($([(:($(P)($(quot(f)), $d)))::Expr for (f, d) in fields]...)))

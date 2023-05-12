@@ -1186,10 +1186,13 @@ end
 @test Meta.parse("@Mdl.foo [1] + [2]") == Meta.parse("@Mdl.foo([1] + [2])")
 
 # issue #24289
+module M24289
 macro m24289()
     :(global $(esc(:x24289)) = 1)
 end
-@test (@macroexpand @m24289) == :(global x24289 = 1)
+end
+M24289.@m24289
+@test x24289 === 1
 
 # parsing numbers with _ and .
 @test Meta.parse("1_2.3_4") == 12.34
@@ -1545,7 +1548,7 @@ let ex = Meta.parse("@test27521(2) do y; y; end")
     fex = Expr(:(->), Expr(:tuple, :y), Expr(:block, LineNumberNode(1,:none), :y))
     @test ex == Expr(:do, Expr(:macrocall, Symbol("@test27521"), LineNumberNode(1,:none), 2),
                      fex)
-    @test macroexpand(@__MODULE__, ex) == Expr(:tuple, fex, 2)
+    @test macroexpand(@__MODULE__, ex).args[1] == Expr(:tuple, esc(fex), 2)
 end
 
 # issue #43018
@@ -1664,10 +1667,12 @@ end
 macro foo28244(sym)
     x = :(bar())
     push!(x.args, Expr(sym))
-    x
+    esc(x)
 end
-@test (@macroexpand @foo28244(kw)) == Expr(:call, GlobalRef(@__MODULE__,:bar), Expr(:kw))
-@test eval(:(@macroexpand @foo28244($(Symbol("let"))))) == Expr(:error, "malformed expression")
+@test @macroexpand(@foo28244(kw)) == Expr(:call, :bar, Expr(:kw))
+let x = @macroexpand @foo28244(var"let")
+    @test Meta.lower(@__MODULE__, x) == Expr(:error, "malformed expression")
+end
 
 # #16356
 @test_throws ParseError Meta.parse("0xapi")
@@ -2900,13 +2905,13 @@ macro m_underscore_hygiene()
     return :(_ = 1)
 end
 
-@test @macroexpand(@m_underscore_hygiene()) == :(_ = 1)
+@test Meta.@lower(@m_underscore_hygiene()) === 1
 
 macro m_begin_hygiene(a)
     return :($(esc(a))[begin])
 end
 
-@test @m_begin_hygiene([1, 2, 3]) == 1
+@test @m_begin_hygiene([1, 2, 3]) === 1
 
 # issue 40258
 @test "a $("b $("c")")" == "a b c"
@@ -3226,8 +3231,14 @@ end
 @test Meta.parseatom("@foo", 1; filename="foo", lineno=7) == (Expr(:macrocall, :var"@foo", LineNumberNode(7, :foo)), 5)
 @test Meta.parseall("@foo"; filename="foo", lineno=3) == Expr(:toplevel, LineNumberNode(3, :foo), Expr(:macrocall, :var"@foo", LineNumberNode(3, :foo)))
 
-let ex = :(const $(esc(:x)) = 1; (::typeof(2))() = $(esc(:x)))
-    @test macroexpand(Main, Expr(:var"hygienic-scope", ex, Main)).args[3].args[1] == :((::$(GlobalRef(Main, :typeof))(2))())
+module M43993
+function foo43993 end
+const typeof = error
+end
+let ex = :(const $(esc(:x)) = 1; (::typeof($(esc(:foo43993))))() = $(esc(:x)))
+    Core.eval(M43993, Expr(:var"hygienic-scope", ex, Core))
+    @test M43993.x === 1
+    @test invokelatest(M43993.foo43993) === 1
 end
 
 struct Foo44013
@@ -3449,26 +3460,3 @@ end
              elseif false || (()->true)()
                  42
              end)) == 42
-
-macro _macroexpand(x, m=__module__)
-    :($__source__; macroexpand($m, Expr(:var"hygienic-scope", $(esc(Expr(:quote, x))), $m)))
-end
-
-@testset "unescaping in :global expressions" begin
-    m = @__MODULE__
-    @test @_macroexpand(global x::T) == :(global x::$(GlobalRef(m, :T)))
-    @test @_macroexpand(global (x, $(esc(:y)))) == :(global (x, y))
-    @test @_macroexpand(global (x::S, $(esc(:y))::$(esc(:T)))) ==
-        :(global (x::$(GlobalRef(m, :S)), y::T))
-    @test @_macroexpand(global (; x, $(esc(:y)))) == :(global (; x, y))
-    @test @_macroexpand(global (; x::S, $(esc(:y))::$(esc(:T)))) ==
-        :(global (; x::$(GlobalRef(m, :S)), y::T))
-
-    @test @_macroexpand(global x::T = a) == :(global x::$(GlobalRef(m, :T)) = $(GlobalRef(m, :a)))
-    @test @_macroexpand(global (x, $(esc(:y))) = a) == :(global (x, y) = $(GlobalRef(m, :a)))
-    @test @_macroexpand(global (x::S, $(esc(:y))::$(esc(:T))) = a) ==
-        :(global (x::$(GlobalRef(m, :S)), y::T) = $(GlobalRef(m, :a)))
-    @test @_macroexpand(global (; x, $(esc(:y))) = a) == :(global (; x, y) = $(GlobalRef(m, :a)))
-    @test @_macroexpand(global (; x::S, $(esc(:y))::$(esc(:T))) = a) ==
-        :(global (; x::$(GlobalRef(m, :S)), y::T) = $(GlobalRef(m, :a)))
-end
