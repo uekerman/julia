@@ -284,16 +284,25 @@ static jl_callptr_t _jl_compile_codeinst(
             auto spec = (void*)getAddressForFunction(decls.specFunctionObject);
             if (jl_atomic_cmpswap_acqrel(&this_code->specptr.fptr, &prev_specptr, spec)) {
                 // only set specsig and invoke if we were the first to set specptr
-                jl_atomic_store_relaxed(&this_code->specsigflags, (uint8_t) isspecsig);
+                _jl_specsig_flags_t specsig = { {
+                    /* specptr_specialized */ isspecsig,
+                    /* specptr_matches_invokeptr */ 0,
+                    /* from_image */ 0
+                } };
+                jl_atomic_store_relaxed(&this_code->specsigflags, specsig.bits);
                 // we might overwrite invokeptr here; that's ok, anybody who relied on the identity of invokeptr
                 // either assumes that specptr was null, doesn't care about specptr,
                 // or will wait until specsigflags has 0b10 set before reloading invoke
                 jl_atomic_store_release(&this_code->invoke, addr);
-                jl_atomic_store_release(&this_code->specsigflags, (uint8_t) (0b10 | isspecsig));
+                specsig.flags.specptr_matches_invokeptr = 1;
+                jl_atomic_store_release(&this_code->specsigflags, specsig.bits);
             } else {
                 //someone else beat us, don't commit any results
-                while (!(jl_atomic_load_acquire(&this_code->specsigflags) & 0b10)) {
+                _jl_specsig_flags_t specsig;
+                specsig.bits = jl_atomic_load_acquire(&this_code->specsigflags);
+                while (!specsig.flags.specptr_matches_invokeptr) {
                     jl_cpu_pause();
+                    specsig.bits = jl_atomic_load_acquire(&this_code->specsigflags);
                 }
                 addr = jl_atomic_load_relaxed(&this_code->invoke);
             }

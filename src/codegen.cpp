@@ -4418,18 +4418,31 @@ static jl_cgval_t emit_invoke(jl_codectx_t &ctx, const jl_cgval_t &lival, const 
                         // WARNING: isspecsig is protected by the codegen-lock. If that lock is removed, then the isspecsig load needs to be properly atomically sequenced with this.
                         auto fptr = jl_atomic_load_relaxed(&codeinst->specptr.fptr);
                         if (fptr) {
-                            while (!(jl_atomic_load_acquire(&codeinst->specsigflags) & 0b10)) {
+                            _jl_specsig_flags_t specsigflags;
+                            specsigflags.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
+                            while (!specsigflags.flags.specptr_matches_invokeptr) {
                                 jl_cpu_pause();
+                                specsigflags.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
                             }
                             invoke = jl_atomic_load_relaxed(&codeinst->invoke);
-                            if (specsig ? jl_atomic_load_relaxed(&codeinst->specsigflags) & 0b1 : invoke == jl_fptr_args_addr) {
+                            bool specialized;
+                            if (specsig) {
+                                specsigflags.bits = jl_atomic_load_relaxed(&codeinst->specsigflags);
+                                specialized = specsigflags.flags.specptr_specialized;
+                            } else {
+                                specialized = (invoke == jl_fptr_args_addr);
+                            }
+                            if (specialized) {
                                 protoname = jl_ExecutionEngine->getFunctionAtAddress((uintptr_t)fptr, codeinst);
                                 if (ctx.external_linkage) {
                                     // TODO: Add !specsig support to aotcompile.cpp
                                     // Check that the codeinst is containing native code
-                                    if (specsig && jl_atomic_load_relaxed(&codeinst->specsigflags) & 0b100) {
-                                        external = true;
-                                        need_to_emit = false;
+                                    if (specsig) {
+                                        specsigflags.bits = jl_atomic_load_relaxed(&codeinst->specsigflags);
+                                        if (specsigflags.flags.from_image) {
+                                            external = true;
+                                            need_to_emit = false;
+                                        }
                                     }
                                 }
                                 else { // ctx.use_cache
@@ -6002,8 +6015,11 @@ static Function* gen_cfun_wrapper(
         auto fptr = jl_atomic_load_relaxed(&codeinst->specptr.fptr);
         assert(invoke);
         if (fptr) {
-            while (!(jl_atomic_load_acquire(&codeinst->specsigflags) & 0b10)) {
+            _jl_specsig_flags_t specsig;
+            specsig.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
+            while (!specsig.flags.specptr_matches_invokeptr) {
                 jl_cpu_pause();
+                specsig.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
             }
             invoke = jl_atomic_load_relaxed(&codeinst->invoke);
         }
@@ -6017,9 +6033,13 @@ static Function* gen_cfun_wrapper(
             callptr = (void*)codeinst->rettype_const;
             calltype = 2;
         }
-        else if (jl_atomic_load_relaxed(&codeinst->specsigflags) & 0b1) {
-            callptr = fptr;
-            calltype = 3;
+        else {
+            _jl_specsig_flags_t specsig;
+	    specsig.bits = jl_atomic_load_relaxed(&codeinst->specsigflags);
+            if (specsig.flags.specptr_specialized) {
+                callptr = fptr;
+                calltype = 3;
+            }
         }
         astrt = codeinst->rettype;
         if (astrt != (jl_value_t*)jl_bottom_type &&
@@ -8815,9 +8835,12 @@ void jl_compile_workqueue(
         // WARNING: isspecsig is protected by the codegen-lock. If that lock is removed, then the isspecsig load needs to be properly atomically sequenced with this.
         if (cache_valid && invoke != NULL) {
             auto fptr = jl_atomic_load_relaxed(&codeinst->specptr.fptr);
+            _jl_specsig_flags_t specsig;
             if (fptr) {
-                while (!(jl_atomic_load_acquire(&codeinst->specsigflags) & 0b10)) {
+                specsig.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
+                while (!specsig.flags.specptr_matches_invokeptr) {
                     jl_cpu_pause();
+                    specsig.bits = jl_atomic_load_acquire(&codeinst->specsigflags);
                 }
                 // in case we are racing with another thread that is emitting this function
                 invoke = jl_atomic_load_relaxed(&codeinst->invoke);
@@ -8825,9 +8848,12 @@ void jl_compile_workqueue(
             if (invoke == jl_fptr_args_addr) {
                 preal_decl = jl_ExecutionEngine->getFunctionAtAddress((uintptr_t)fptr, codeinst);
             }
-            else if (jl_atomic_load_relaxed(&codeinst->specsigflags) & 0b1) {
-                preal_decl = jl_ExecutionEngine->getFunctionAtAddress((uintptr_t)fptr, codeinst);
-                preal_specsig = true;
+            else {
+                specsig.bits = jl_atomic_load_relaxed(&codeinst->specsigflags);
+                if (specsig.flags.specptr_specialized) {
+                    preal_decl = jl_ExecutionEngine->getFunctionAtAddress((uintptr_t)fptr, codeinst);
+                    preal_specsig = true;
+                }
             }
         }
         else {
