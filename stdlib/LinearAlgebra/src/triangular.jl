@@ -240,13 +240,13 @@ Base.isstored(A::UnitUpperTriangular, i::Int, j::Int) =
 Base.isstored(A::UpperTriangular, i::Int, j::Int) =
     i <= j ? Base.isstored(A.data, i, j) : false
 
-getindex(A::UnitLowerTriangular{T}, i::Integer, j::Integer) where {T} =
+getindex(A::UnitLowerTriangular{T}, i::Int, j::Int) where {T} =
     i > j ? A.data[i,j] : ifelse(i == j, oneunit(T), zero(T))
-getindex(A::LowerTriangular, i::Integer, j::Integer) =
+getindex(A::LowerTriangular, i::Int, j::Int) =
     i >= j ? A.data[i,j] : zero(A.data[j,i])
-getindex(A::UnitUpperTriangular{T}, i::Integer, j::Integer) where {T} =
+getindex(A::UnitUpperTriangular{T}, i::Int, j::Int) where {T} =
     i < j ? A.data[i,j] : ifelse(i == j, oneunit(T), zero(T))
-getindex(A::UpperTriangular, i::Integer, j::Integer) =
+getindex(A::UpperTriangular, i::Int, j::Int) =
     i <= j ? A.data[i,j] : zero(A.data[j,i])
 
 function setindex!(A::UpperTriangular, x, i::Integer, j::Integer)

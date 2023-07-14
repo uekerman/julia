@@ -238,4 +238,11 @@ using .Main.ImmutableArrays
     @test convert(AbstractMatrix{Float64}, H)::UpperHessenberg{Float64,ImmutableArray{Float64,2,Array{Float64,2}}} == H
 end
 
+@testset "getindex with Integers" begin
+    M = reshape(1:9, 3, 3)
+    S = UpperHessenberg(M)
+    @test_throws "invalid index" S[true, true]
+    @test S[1,2] == S[Int8(1),UInt16(2)] == S[big(1), Int16(2)]
+end
+
 end # module TestHessenberg
