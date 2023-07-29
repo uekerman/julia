@@ -165,6 +165,7 @@ sub_fast(x::T, y::T) where {T<:FloatTypes} = sub_float_fast(x, y)
 mul_fast(x::T, y::T) where {T<:FloatTypes} = mul_float_fast(x, y)
 div_fast(x::T, y::T) where {T<:FloatTypes} = div_float_fast(x, y)
 
+
 add_fast(x::T, y::T, zs::T...) where {T<:FloatTypes} =
     add_fast(add_fast(x, y), zs...)
 mul_fast(x::T, y::T, zs::T...) where {T<:FloatTypes} =

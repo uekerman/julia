@@ -23,7 +23,7 @@ print-depot-path:
 	@$(call PRINT_JULIA, $(call spawn,$(JULIA_EXECUTABLE)) --startup-file=no -e '@show Base.DEPOT_PATH')
 
 STDLIBS := ArgTools Artifacts Base64 CRC32c FileWatching Libdl NetworkOptions SHA Serialization \
-		   GMP_jll LLVMLibUnwind_jll LibUV_jll LibUnwind_jll MbedTLS_jll OpenLibm_jll PCRE2_jll \
+		   GMP_jll LLVMLibUnwind_jll LibUV_jll LibUnwind_jll MbedTLS_jll PCRE2_jll \
 		   Zlib_jll dSFMT_jll libLLVM_jll libblastrampoline_jll OpenBLAS_jll Printf Random Tar \
 		   LibSSH2_jll MPFR_jll LinearAlgebra Dates Distributed Future LibGit2 Profile SparseArrays UUIDs \
 		   SharedArrays TOML Test LibCURL Downloads Pkg Dates LazyArtifacts Sockets Unicode Markdown \
@@ -85,7 +85,6 @@ $(eval $(call pkgimg_builder,LibUV_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,LibUnwind_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,MbedTLS_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,nghttp2_jll,Artifacts Libdl))
-$(eval $(call pkgimg_builder,OpenLibm_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,PCRE2_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,Zlib_jll,Artifacts Libdl))
 $(eval $(call pkgimg_builder,dSFMT_jll,Artifacts Libdl))
