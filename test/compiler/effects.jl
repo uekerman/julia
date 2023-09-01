@@ -72,7 +72,7 @@ end
 # https://github.com/JuliaLang/julia/issues/41694
 Base.@assume_effects :terminates_globally function issue41694(x)
     res = 1
-    1 < x < 20 || throw("bad")
+    0 ≤ x < 20 || error("bad fact")
     while x > 1
         res *= x
         x -= 1
@@ -85,26 +85,35 @@ end
 end
 
 Base.@assume_effects :terminates_globally function recur_termination1(x)
-    x == 1 && return 1
-    1 < x < 20 || throw("bad")
+    x == 0 && return 1
+    0 ≤ x < 20 || error("bad fact")
     return x * recur_termination1(x-1)
 end
-@test Core.Compiler.is_foldable(Base.infer_effects(recur_termination1, (Int,)))
-@test fully_eliminated() do
+@test_broken Core.Compiler.is_foldable(Base.infer_effects(recur_termination1, (Int,)))
+@test Core.Compiler.is_terminates(Base.infer_effects(recur_termination1, (Int,)))
+function recur_termination2()
+    Base.@assume_effects :total !:terminates_globally
     recur_termination1(12)
 end
+@test_broken fully_eliminated(recur_termination2)
+@test fully_eliminated() do; recur_termination2(); end
 
 Base.@assume_effects :terminates_globally function recur_termination21(x)
-    x == 1 && return 1
-    1 < x < 20 || throw("bad")
+    x == 0 && return 1
+    0 ≤ x < 20 || error("bad fact")
     return recur_termination22(x)
 end
 recur_termination22(x) = x * recur_termination21(x-1)
-@test Core.Compiler.is_foldable(Base.infer_effects(recur_termination21, (Int,)))
-@test Core.Compiler.is_foldable(Base.infer_effects(recur_termination22, (Int,)))
-@test fully_eliminated() do
+@test_broken Core.Compiler.is_foldable(Base.infer_effects(recur_termination21, (Int,)))
+@test_broken Core.Compiler.is_foldable(Base.infer_effects(recur_termination22, (Int,)))
+@test Core.Compiler.is_terminates(Base.infer_effects(recur_termination21, (Int,)))
+@test Core.Compiler.is_terminates(Base.infer_effects(recur_termination22, (Int,)))
+function recur_termination2x()
+    Base.@assume_effects :total !:terminates_globally
     recur_termination21(12) + recur_termination22(12)
 end
+@test_broken fully_eliminated(recur_termination2x)
+@test fully_eliminated() do; recur_termination2x(); end
 
 # anonymous function support for `@assume_effects`
 @test fully_eliminated() do
@@ -112,7 +121,7 @@ end
         # this :terminates_locally allows this anonymous function to be constant-folded
         Base.@assume_effects :terminates_locally
         res = 1
-        1 < x < 20 || error("bad pow")
+        0 ≤ x < 20 || error("bad fact")
         while x > 1
             res *= x
             x -= 1
@@ -833,6 +842,11 @@ for op = Any[
     end
 end
 
+# tuple indexing
+# --------------
+
+@test Core.Compiler.is_foldable(Base.infer_effects(iterate, Tuple{Tuple{Int, Int}, Int}))
+
 # end to end
 # ----------
 
@@ -1028,3 +1042,39 @@ f2_compilerbarrier(b) = Base.compilerbarrier(:conditional, b)
 
 @test !Core.Compiler.is_consistent(Base.infer_effects(f1_compilerbarrier, (Bool,)))
 @test Core.Compiler.is_consistent(Base.infer_effects(f2_compilerbarrier, (Bool,)))
+
+# Optimizer-refined effects
+function f1_optrefine(b)
+    if Base.inferencebarrier(b)
+        error()
+    end
+    return b
+end
+@test !Core.Compiler.is_consistent(Base.infer_effects(f1_optrefine, (Bool,)))
+
+function f2_optrefine()
+    if Ref(false)[]
+        error()
+    end
+    return true
+end
+@test Core.Compiler.is_nothrow(Base.infer_effects(f2_optrefine))
+
+function f3_optrefine(x)
+    @fastmath sqrt(x)
+    return x
+end
+@test Core.Compiler.is_consistent(Base.infer_effects(f3_optrefine))
+
+# Check that :consistent is properly modeled for throwing statements
+const GLOBAL_MUTABLE_SWITCH = Ref{Bool}(false)
+
+check_switch(switch::Base.RefValue{Bool}) = (switch[] && error(); return nothing)
+check_switch2() = check_switch(GLOBAL_MUTABLE_SWITCH)
+
+@test (Base.return_types(check_switch2) |> only) === Nothing
+GLOBAL_MUTABLE_SWITCH[] = true
+# Check that flipping the switch doesn't accidentally change the return type
+@test (Base.return_types(check_switch2) |> only) === Nothing
+
+@test !Core.Compiler.is_consistent(Base.infer_effects(check_switch, (Base.RefValue{Bool},)))

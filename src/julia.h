@@ -858,6 +858,7 @@ extern JL_DLLIMPORT jl_value_t *jl_array_uint8_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_value_t *jl_array_any_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_value_t *jl_array_symbol_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_value_t *jl_array_int32_type JL_GLOBALLY_ROOTED;
+extern JL_DLLIMPORT jl_value_t *jl_array_uint32_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_value_t *jl_array_uint64_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_datatype_t *jl_expr_type JL_GLOBALLY_ROOTED;
 extern JL_DLLIMPORT jl_datatype_t *jl_binding_type JL_GLOBALLY_ROOTED;
@@ -1130,6 +1131,18 @@ STATIC_INLINE void jl_array_uint8_set(void *a, size_t i, uint8_t x) JL_NOTSAFEPO
     assert(i < jl_array_len(a));
     assert(jl_typetagis(a, jl_array_uint8_type));
     ((uint8_t*)(jl_array_data(a)))[i] = x;
+}
+STATIC_INLINE uint8_t jl_array_uint32_ref(void *a, size_t i) JL_NOTSAFEPOINT
+{
+    assert(i < jl_array_len(a));
+    assert(jl_typetagis(a, jl_array_uint32_type));
+    return ((uint32_t*)(jl_array_data(a)))[i];
+}
+STATIC_INLINE void jl_array_uint32_set(void *a, size_t i, uint8_t x) JL_NOTSAFEPOINT
+{
+    assert(i < jl_array_len(a));
+    assert(jl_typetagis(a, jl_array_uint32_type));
+    ((uint32_t*)(jl_array_data(a)))[i] = x;
 }
 
 #define jl_exprarg(e,n) jl_array_ptr_ref(((jl_expr_t*)(e))->args, n)
@@ -2354,6 +2367,8 @@ typedef struct {
     int safepoint_on_entry; // Emit a safepoint on entry to each function
     int gcstack_arg; // Pass the ptls value as an argument with swiftself
 
+    int use_jlplt; // Whether to use the Julia PLT mechanism or emit symbols directly
+
     // Cache access. Default: jl_rettype_inferred.
     jl_codeinstance_lookup_t lookup;
 
@@ -2362,6 +2377,10 @@ typedef struct {
     jl_value_t *generic_context;
 } jl_cgparams_t;
 extern JL_DLLEXPORT int jl_default_debug_info_kind;
+
+typedef struct {
+    int emit_metadata;
+} jl_emission_params_t;
 
 #ifdef __cplusplus
 }

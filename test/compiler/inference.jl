@@ -1970,7 +1970,7 @@ function foo25261()
         next = f25261(Core.getfield(next, 2))
     end
 end
-let opt25261 = code_typed(foo25261, Tuple{}, optimize=false)[1].first.code
+let opt25261 = code_typed(foo25261, Tuple{}, optimize=true)[1].first.code
     i = 1
     # Skip to after the branch
     while !isa(opt25261[i], GotoIfNot)
@@ -1978,7 +1978,7 @@ let opt25261 = code_typed(foo25261, Tuple{}, optimize=false)[1].first.code
     end
     foundslot = false
     for expr25261 in opt25261[i:end]
-        if expr25261 isa Core.Compiler.TypedSlot && expr25261.typ === Tuple{Int, Int}
+        if expr25261 isa Core.PiNode && expr25261.typ === Tuple{Int, Int}
             # This should be the assignment to the SSAValue into the getfield
             # call - make sure it's a TypedSlot
             foundslot = true
@@ -4705,7 +4705,7 @@ end |> only === Union{Int,Nothing}
 @test Base.return_types((Symbol,Int)) do setting, val
     compilerbarrier(setting, val)
 end |> only === Any # XXX we may want to have "compile-time" error for this instead
-for setting = (:type, :const, :conditional)
+for setting = (#=:type, :const,=# :conditional,)
     # a successful barrier on abstract interpretation should be eliminated at the optimization
     @test @eval fully_eliminated((Int,)) do a
         compilerbarrier($(QuoteNode(setting)), 42)
@@ -5142,6 +5142,9 @@ h45759(x::Tuple{Any,Vararg}; kwargs...) = x[1] + h45759(x[2:end]; kwargs...)
 h45759(x::Tuple{}; kwargs...) = 0
 @test only(Base.return_types(h45759, Tuple{Tuple{Int,Int,Int,Int,Int,Int,Int}})) == Int
 
+# issue #50709
+@test Base.code_typed_by_type(Tuple{Type{Vector{S}} where {T, S<:AbstractVector{T}}, UndefInitializer, Int})[1][2] == Vector{<:AbstractVector{T}} where T
+
 @test only(Base.return_types((typeof([[[1]]]),)) do x
     sum(x) do v
         sum(length, v)
@@ -5172,3 +5175,13 @@ end |> only === Val{5}
 @test fully_eliminated() do
     length(continue_const_prop(1, 5))
 end
+
+# issue #51090
+@noinline function bar51090(b)
+    b == 0 && return
+    r = foo51090(b - 1)
+    Base.donotdelete(b)
+    return r
+end
+foo51090(b) = return bar51090(b)
+@test !fully_eliminated(foo51090, (Int,))

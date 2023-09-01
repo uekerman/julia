@@ -674,7 +674,7 @@ end
 
 iskindtype(@nospecialize t) = (t === DataType || t === UnionAll || t === Union || t === typeof(Bottom))
 isconcretedispatch(@nospecialize t) = isconcretetype(t) && !iskindtype(t)
-has_free_typevars(@nospecialize(t)) = ccall(:jl_has_free_typevars, Cint, (Any,), t) != 0
+has_free_typevars(@nospecialize(t)) = (@_total_meta; ccall(:jl_has_free_typevars, Cint, (Any,), t) != 0)
 
 # equivalent to isa(v, Type) && isdispatchtuple(Tuple{v}) || v === Union{}
 # and is thus perhaps most similar to the old (pre-1.0) `isleaftype` query
@@ -1079,6 +1079,7 @@ See also: [`which`](@ref) and `@which`.
 function methods(@nospecialize(f), @nospecialize(t),
                  mod::Union{Tuple{Module},AbstractArray{Module},Nothing}=nothing)
     world = get_world_counter()
+    world == typemax(UInt) && error("code reflection cannot be used from generated functions")
     # Lack of specialization => a comprehension triggers too many invalidations via _collect, so collect the methods manually
     ms = Method[]
     for m in _methods(f, t, -1, world)::Vector
@@ -1092,8 +1093,7 @@ methods(@nospecialize(f), @nospecialize(t), mod::Module) = methods(f, t, (mod,))
 function methods_including_ambiguous(@nospecialize(f), @nospecialize(t))
     tt = signature_type(f, t)
     world = get_world_counter()
-    (ccall(:jl_is_in_pure_context, Bool, ()) || world == typemax(UInt)) &&
-        error("code reflection cannot be used from generated functions")
+    world == typemax(UInt) && error("code reflection cannot be used from generated functions")
     min = RefValue{UInt}(typemin(UInt))
     max = RefValue{UInt}(typemax(UInt))
     ms = _methods_by_ftype(tt, nothing, -1, world, true, min, max, Ptr{Int32}(C_NULL))::Vector
@@ -1219,6 +1219,7 @@ struct CodegenParams
     debug_info_kind::Cint
     safepoint_on_entry::Cint
     gcstack_arg::Cint
+    use_jlplt::Cint
 
     lookup::Ptr{Cvoid}
 
@@ -1228,7 +1229,7 @@ struct CodegenParams
                    prefer_specsig::Bool=false,
                    gnu_pubnames=true, debug_info_kind::Cint = default_debug_info_kind(),
                    safepoint_on_entry::Bool=true,
-                   gcstack_arg::Bool=true,
+                   gcstack_arg::Bool=true, use_jlplt::Bool=true,
                    lookup::Ptr{Cvoid}=unsafe_load(cglobal(:jl_rettype_inferred_addr, Ptr{Cvoid})),
                    generic_context = nothing)
         return new(
@@ -1236,8 +1237,17 @@ struct CodegenParams
             Cint(prefer_specsig),
             Cint(gnu_pubnames), debug_info_kind,
             Cint(safepoint_on_entry),
-            Cint(gcstack_arg),
+            Cint(gcstack_arg), Cint(use_jlplt),
             lookup, generic_context)
+    end
+end
+
+# this type mirrors jl_emission_params_t (documented in julia.h)
+struct EmissionParams
+    emit_metadata::Cint
+
+    function EmissionParams(; emit_metadata::Bool=true)
+        return new(Cint(emit_metadata))
     end
 end
 
@@ -1633,12 +1643,12 @@ function infer_effects(@nospecialize(f), @nospecialize(types=default_tt(f));
             Core.Compiler.ArgInfo(nothing, argtypes), rt)
     end
     tt = signature_type(f, types)
-    result = Core.Compiler.findall(tt, Core.Compiler.method_table(interp))
-    if result === missing
-        # unanalyzable call, return the unknown effects
+    matches = Core.Compiler.findall(tt, Core.Compiler.method_table(interp))
+    if matches === nothing
+        # unanalyzable call, i.e. the interpreter world might be newer than the world where
+        # the `f` is defined, return the unknown effects
         return Core.Compiler.Effects()
     end
-    (; matches) = result
     effects = Core.Compiler.EFFECTS_TOTAL
     if matches.ambig || !any(match::Core.MethodMatch->match.fully_covers, matches.matches)
         # account for the fact that we may encounter a MethodError with a non-covered or ambiguous signature.
@@ -1647,9 +1657,9 @@ function infer_effects(@nospecialize(f), @nospecialize(types=default_tt(f));
     for match in matches.matches
         match = match::Core.MethodMatch
         frame = Core.Compiler.typeinf_frame(interp,
-            match.method, match.spec_types, match.sparams, #=run_optimizer=#false)
+            match.method, match.spec_types, match.sparams, #=run_optimizer=#true)
         frame === nothing && return Core.Compiler.Effects()
-        effects = Core.Compiler.merge_effects(effects, frame.ipo_effects)
+        effects = Core.Compiler.merge_effects(effects, frame.result.ipo_effects)
     end
     return effects
 end
@@ -1669,6 +1679,7 @@ function print_statement_costs(io::IO, @nospecialize(tt::Type);
                                world::UInt=get_world_counter(),
                                interp::Core.Compiler.AbstractInterpreter=Core.Compiler.NativeInterpreter(world))
     tt = to_tuple_type(tt)
+    world == typemax(UInt) && error("code reflection cannot be used from generated functions")
     matches = _methods_by_ftype(tt, #=lim=#-1, world)::Vector
     params = Core.Compiler.OptimizationParams(interp)
     cst = Int[]
@@ -1960,6 +1971,7 @@ function isambiguous(m1::Method, m2::Method; ambiguous_bottom::Bool=false)
             has_bottom_parameter(ti) && return false
         end
         world = get_world_counter()
+        world == typemax(UInt) && return true # intersecting methods are always ambiguous in the generator world, which is true, albeit maybe confusing for some
         min = Ref{UInt}(typemin(UInt))
         max = Ref{UInt}(typemax(UInt))
         has_ambig = Ref{Int32}(0)
