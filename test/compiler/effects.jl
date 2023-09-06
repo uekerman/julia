@@ -1115,3 +1115,38 @@ end
 @test Base.infer_effects((Base.RefValue{Any},)) do y
     post_opt_refine_effect_free(y, true)
 end |> Core.Compiler.is_effect_free
+
+# Check EA-based refinement of :effect_free
+@noinline noinline_set_ref!(x::Base.RefValue{Int}) = (x[] = 1; nothing)
+function set_ref_with_unused_arg_1(_)
+    x = Ref{Int}(0)
+    noinline_set_ref!(x)
+    return nothing
+end
+function set_ref_with_unused_arg_2(_)
+    x = @noinline Ref{Int}(0)
+    noinline_set_ref!(x)
+    return nothing
+end
+function arg_set_ref(x::Base.RefValue{Int})
+    noinline_set_ref!(x)
+    y = Ref(false)
+    y[] && (Main.x = x)
+    return nothing
+end
+
+# This is inferable by type analysis only since the arguments have no mutable memory
+@test Core.Compiler.is_effect_free_if_inaccessiblememonly(Base.infer_effects(noinline_set_ref!, (Base.RefValue{Int},)))
+let effects = Base.infer_effects(set_ref_with_unused_arg_1, (Nothing,))
+    @test Core.Compiler.is_inaccessiblememonly(effects)
+    @test Core.Compiler.is_effect_free(effects)
+end
+let effects = Base.infer_effects(set_ref_with_unused_arg_2, (Nothing,))
+    @test Core.Compiler.is_inaccessiblememonly(effects)
+    @test Core.Compiler.is_effect_free(effects)
+end
+# These need EA
+@test Core.Compiler.is_effect_free(Base.infer_effects(set_ref_with_unused_arg_1, (Base.RefValue{Int},)))
+# see TODO in `check_all_args_noescape!`
+@test_broken Core.Compiler.is_effect_free(Base.infer_effects(set_ref_with_unused_arg_2, (Base.RefValue{Int},)))
+@test Core.Compiler.is_effect_free_if_inaccessiblememonly(Base.infer_effects(arg_set_ref))

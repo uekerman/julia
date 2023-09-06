@@ -179,8 +179,7 @@ end
 function record_escapes!(interp::EscapeAnalyzer,
     caller::InferenceResult, estate::EscapeState, cacheir::IRCode)
     cache = ArgEscapeCache(estate)
-    ecache = EscapeCacheInfo(cache, estate, cacheir)
-    return caller.argescapes = ecache
+    return CC.stack_analysis_result!(caller, EscapeCacheInfo(cache, estate, cacheir))
 end
 
 struct GetEscapeCache
@@ -231,12 +230,12 @@ function run_passes_ipo_safe_with_ea(interp::EscapeAnalyzer,
     return ir
 end
 
-function CC.cache_result!(interp::EscapeAnalyzer, result::InferenceResult)
-    argescapes = result.argescapes
-    if argescapes isa EscapeCacheInfo
-        interp.escape_cache.cache[result.linfo] = argescapes
+function CC.cache_result!(interp::EscapeAnalyzer, inf_result::InferenceResult)
+    result = CC.traverse_analysis_results(inf_result) do @nospecialize result
+        return result isa EscapeCacheInfo ? result : nothing
     end
-    return @invoke CC.cache_result!(interp::AbstractInterpreter, result::InferenceResult)
+    result isa EscapeCacheInfo && (interp.escape_cache.cache[inf_result.linfo] = result)
+    return @invoke CC.cache_result!(interp::AbstractInterpreter, inf_result::InferenceResult)
 end
 
 # printing

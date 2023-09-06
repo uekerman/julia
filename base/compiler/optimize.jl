@@ -24,9 +24,7 @@ const IR_FLAG_INLINE      = UInt32(1) << 1
 # This statement is marked as @noinline by user
 const IR_FLAG_NOINLINE    = UInt32(1) << 2
 const IR_FLAG_THROW_BLOCK = UInt32(1) << 3
-# This statement may be removed if its result is unused. In particular,
-# it must be both :effect_free and :nothrow.
-# TODO: Separate these out.
+# This statement was proven :effect_free
 const IR_FLAG_EFFECT_FREE = UInt32(1) << 4
 # This statement was proven not to throw
 const IR_FLAG_NOTHROW     = UInt32(1) << 5
@@ -38,6 +36,12 @@ const IR_FLAG_CONSISTENT  = UInt32(1) << 6
 const IR_FLAG_REFINED     = UInt32(1) << 7
 # This is :noub == ALWAYS_TRUE
 const IR_FLAG_NOUB        = UInt32(1) << 8
+
+# TODO: Both of these should eventually go away once
+# This is :effect_free == EFFECT_FREE_IF_INACCESSIBLEMEMONLY
+const IR_FLAG_EFIIMO      = UInt32(1) << 9
+# This is :inaccessiblememonly == INACCESSIBLEMEM_OR_ARGMEMONLY
+const IR_FLAG_INACCESSIBLE_OR_ARGMEM = UInt32(1) << 10
 
 const IR_FLAGS_EFFECTS = IR_FLAG_EFFECT_FREE | IR_FLAG_NOTHROW | IR_FLAG_CONSISTENT | IR_FLAG_NOUB
 
@@ -543,8 +547,10 @@ mutable struct PostOptAnalysisState
     const tpdum::TwoPhaseDefUseMap
     const lazypostdomtree::LazyPostDomtree
     const lazyagdomtree::LazyAugmentedDomtree
+    const ea_analysis_pending::Vector{Int}
     all_retpaths_consistent::Bool
     all_effect_free::Bool
+    effect_free_if_argmem_only::Union{Nothing,Bool}
     all_nothrow::Bool
     all_noub::Bool
     any_conditional_ub::Bool
@@ -553,7 +559,8 @@ mutable struct PostOptAnalysisState
         tpdum = TwoPhaseDefUseMap(length(ir.stmts))
         lazypostdomtree = LazyPostDomtree(ir)
         lazyagdomtree = LazyAugmentedDomtree(ir)
-        return new(result, ir, inconsistent, tpdum, lazypostdomtree, lazyagdomtree, true, true, true, true, false)
+        return new(result, ir, inconsistent, tpdum, lazypostdomtree, lazyagdomtree, Int[],
+                   true, true, nothing, true, true, false)
     end
 end
 
@@ -568,12 +575,34 @@ function any_refinable(sv::PostOptAnalysisState)
             (!is_noub(effects) & sv.all_noub))
 end
 
-function refine_effects!(sv::PostOptAnalysisState)
+struct GetNativeEscapeCache{CodeCache}
+    code_cache::CodeCache
+    GetNativeEscapeCache(code_cache::CodeCache) where CodeCache = new{CodeCache}(code_cache)
+    GetNativeEscapeCache(interp::AbstractInterpreter) = GetNativeEscapeCache(code_cache(interp))
+end
+function ((; code_cache)::GetNativeEscapeCache)(mi::MethodInstance)
+    codeinst = get(code_cache, mi, nothing)
+    codeinst isa CodeInstance || return nothing
+    return traverse_analysis_results(codeinst) do @nospecialize result
+        return result isa EscapeAnalysis.ArgEscapeCache ? result : nothing
+    end
+end
+
+function refine_effects!(interp::AbstractInterpreter, sv::PostOptAnalysisState)
+    if sv.all_effect_free && !isempty(sv.ea_analysis_pending)
+        ir = sv.ir
+        nargs = length(ir.argtypes)
+        estate = EscapeAnalysis.analyze_escapes(ir, nargs, GetNativeEscapeCache(interp))
+        stack_analysis_result!(sv.result, EscapeAnalysis.ArgEscapeCache(estate))
+        validate_mutable_arg_escapes!(estate, sv)
+    end
+
     any_refinable(sv) || return false
     effects = sv.result.ipo_effects
     sv.result.ipo_effects = Effects(effects;
         consistent = sv.all_retpaths_consistent ? ALWAYS_TRUE : effects.consistent,
-        effect_free = sv.all_effect_free ? ALWAYS_TRUE : effects.effect_free,
+        effect_free = sv.all_effect_free ? ALWAYS_TRUE :
+                      sv.effect_free_if_argmem_only === true ? EFFECT_FREE_IF_INACCESSIBLEMEMONLY : effects.effect_free,
         nothrow = sv.all_nothrow ? true : effects.nothrow,
         noub = sv.all_noub ? (sv.any_conditional_ub ? NOUB_IF_NOINBOUNDS : ALWAYS_TRUE) : effects.noub)
     return true
@@ -593,6 +622,61 @@ function is_getfield_with_boundscheck_arg(@nospecialize(stmt), sv::PostOptAnalys
     return true
 end
 
+function check_all_args_noescape!(sv::PostOptAnalysisState, ir::IRCode, stmt::Expr, estate::EscapeAnalysis.EscapeState)
+    if !(isexpr(stmt, :invoke) || isexpr(stmt, :new))
+        # COMBAK Are there any situations where we want to keep analysis going for `:call` expression?
+        return false
+    end
+    for arg in (isexpr(stmt, :invoke) ? stmt.args[2:end] : stmt.args)
+        argt = argextype(arg, ir)
+        if is_mutation_free_argtype(argt)
+            continue
+        end
+        # See if we can find the allocation
+        if isa(arg, Argument)
+            if EscapeAnalysis.has_no_escape(EscapeAnalysis.ignore_argescape(estate[arg]))
+                # Even if we prove everything else effect_free, the best we can
+                # say is :effect_free_if_argmem_only
+                if sv.effect_free_if_argmem_only === nothing
+                    sv.effect_free_if_argmem_only = true
+                end
+            else
+                sv.effect_free_if_argmem_only = false
+            end
+            return false
+        elseif isa(arg, SSAValue)
+            argstmt = ir[arg][:stmt]
+            if !isexpr(argstmt, :new)
+                # TODO: We should be able to use our EscapeInfo to lookup
+                # through trivial identities, etc.
+                # TODO: To support :invoke, we probably need to run EA for all frames with
+                # :effect_free_if_argmem_only & :consistent_if_notreturned
+                return false
+            end
+            argstate = estate[arg]
+            EscapeAnalysis.has_no_escape(argstate) || return false
+            check_all_args_noescape!(sv, ir, argstmt, estate) || return false
+        else
+            return false
+        end
+    end
+    return true
+end
+
+function validate_mutable_arg_escapes!(estate::EscapeAnalysis.EscapeState, sv::PostOptAnalysisState)
+    ir = sv.ir
+    for idx in sv.ea_analysis_pending
+        # See if any mutable memory was allocated in this function and determined
+        # not to escape.
+        inst = ir[SSAValue(idx)]
+        stmt = inst[:stmt]
+        if !(isa(stmt, Expr) && check_all_args_noescape!(sv, ir, stmt, estate))
+            return sv.all_effect_free = false
+        end
+    end
+    return true
+end
+
 function is_conditional_noub(inst::Instruction, sv::PostOptAnalysisState)
     # Special case: `:boundscheck` into `getfield`
     stmt = inst[:stmt]
@@ -606,14 +690,23 @@ function is_conditional_noub(inst::Instruction, sv::PostOptAnalysisState)
     return true
 end
 
+const IR_FLAGS_NEEDS_EA_REFINMENT = IR_FLAG_EFIIMO | IR_FLAG_INACCESSIBLE_OR_ARGMEM
+
 function scan_non_dataflow_flags!(inst::Instruction, sv::PostOptAnalysisState)
     flag = inst[:flag]
-    stmt = inst[:stmt]
-    if !isterminator(stmt) && stmt !== nothing
-        # ignore control flow node – they are not removable on their own and thus not
-        # have `IR_FLAG_EFFECT_FREE` but still do not taint `:effect_free`-ness of
-        # the whole method invocation
-        sv.all_effect_free &= !iszero(flag & IR_FLAG_EFFECT_FREE)
+    # If we can prove that the argmem does not escape the current function, we can
+    # refine this to :effect_free.
+    needs_ea_validation = (flag & IR_FLAGS_NEEDS_EA_REFINMENT) == IR_FLAGS_NEEDS_EA_REFINMENT
+    if !needs_ea_validation
+        stmt = inst[:stmt]
+        if !isterminator(stmt) && stmt !== nothing
+            # ignore control flow node – they are not removable on their own and thus not
+            # have `IR_FLAG_EFFECT_FREE` but still do not taint `:effect_free`-ness of
+            # the whole method invocation
+            sv.all_effect_free &= !iszero(flag & IR_FLAG_EFFECT_FREE)
+        end
+    elseif sv.all_effect_free
+        push!(sv.ea_analysis_pending, inst.idx)
     end
     sv.all_nothrow &= !iszero(flag & IR_FLAG_NOTHROW)
     if iszero(flag & IR_FLAG_NOUB)
@@ -778,7 +871,7 @@ function ipo_dataflow_analysis!(interp::AbstractInterpreter, ir::IRCode, result:
         end
     end
 
-    return refine_effects!(sv)
+    return refine_effects!(interp, sv)
 end
 
 # run the optimization work
