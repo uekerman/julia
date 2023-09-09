@@ -733,16 +733,21 @@ end
 
 """
     @test_throws exception expr
+    @test_throws exception expr broken=true
+    @test_throws exception expr skip=true
 
 Tests that the expression `expr` throws `exception`.
 The exception may specify either a type,
 a string, regular expression, or list of strings occurring in the displayed error message,
 a matching function,
 or a value (which will be tested for equality by comparing fields).
-Note that `@test_throws` does not support a trailing keyword form.
+Note that `@test_throws` does not support any keyword arguments except for `broken` and `skip`.
 
 !!! compat "Julia 1.8"
     The ability to specify anything other than a type or a value as `exception` requires Julia v1.8 or later.
+
+!!! compat "Julia 1.11"
+    The `broken` and `skip` keyword arguments require at least Julia 1.11.
 
 # Examples
 ```jldoctest
@@ -764,8 +769,60 @@ In the final example, instead of matching a single string it could alternatively
 - `["Try", "Complex"]` (a list of strings)
 - `r"Try sqrt\\([Cc]omplex"` (a regular expression)
 - `str -> occursin("complex", str)` (a matching function)
+
+The only two keyword arguments supported by `@test_throws` are `broken` and `skip`.
+
+* `broken=cond`:
+    * If `cond==true`:
+        * Returns a `Broken` `Result` if `ex` either doesn't throw an exception, or does
+        throw an exception but the thrown exception does not match `exception`.
+        * Returns an `Error` `Result` if `ex` throws an exception and the provided exception
+        matches `exception`.
+    * If `conda==false`, this is equivalent to regular `@test_throws exception expr`.
+* `skip=cond`:
+    * If `cond==true`:
+        * Returns a `Skipped` `Result` and does not run the test.
+    * If `cond==false`, this is equivalent to regular `@test_throws exception expr`.
+
+indicates a test that should pass but currently consistently
+  fails when `cond==true`.  Tests that the expression `ex` either doesn't throw
+an exception, or throws an exception that doesn't match the provided type `exception`.
+  or causes an exception.  Returns a `Broken` `Result` if it does, or an `Error`
+  `Result` if the expression evaluates to `true`.  Regular `@test ex` is
+  evaluated when `cond==false`.
+* `skip=cond` marks a test that should not be executed but should be included in
+  test summary reporting as `Broken`, when `cond==true`.  This can be useful for
+  tests that intermittently fail, or tests of not-yet-implemented functionality.
+  Regular `@test ex` is evaluated when `cond==false`.
+
+```jldoctest
+julia> @test_throws DomainError sqrt(1) broken=true
+Test Broken
+
+julia> @test_throws DomainError sqrt(-1) broken=true
+Test Passes
+
+julia> @testDomainError sqrt(1) skip=true
+Test Broken
+
+julia> @test DomainError sqrt(-1) skip=false
+Test Passed
+```
 """
-macro test_throws(extype, ex)
+macro test_throws(extype, ex, kws...)
+    if length(kws) > 1
+        error("@test_throws can accept at most one keyword argument")
+    end
+    if length(kws) == 1
+        kw = only(kw)
+        if (typeof(kw) !== Expr) || (kw.head != :(=)) || (length(kw.args) != 2)
+            error("Invalid syntax for @test_throws")
+        end
+        if kw.args[1] ∉ (:skip, :broken)
+            error("The only valid keyword arguments for @test_throws are broken or skip")
+        end
+    else
+    end
     orig_ex = Expr(:inert, ex)
     ex = Expr(:block, __source__, esc(ex))
     result = quote
