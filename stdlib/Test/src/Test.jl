@@ -810,18 +810,26 @@ Test Passed
 ```
 """
 macro test_throws(extype, ex, kws...)
-    if length(kws) > 1
-        error("@test_throws can accept at most one keyword argument")
-    end
-    if length(kws) == 1
+    if length(kws) == 0
+        broken = []
+        skip = []
+    elseif length(kws) == 1
         kw = only(kw)
         if (typeof(kw) !== Expr) || (kw.head != :(=)) || (length(kw.args) != 2)
             error("Invalid syntax for @test_throws")
         end
         if kw.args[1] ∉ (:skip, :broken)
-            error("The only valid keyword arguments for @test_throws are broken or skip")
+        if kw.args[1] == :broken
+            broken = [kw.args[2]]
+            skip = []
+        elseif kw.args[1] == :skip
+            broken = []
+            skip = [kw.args[2]]
+        else
+            error("@test_throws only accepts two keyword arguments: broken, skip")
         end
     else
+        error("@test_throws can accept at most one keyword argument")
     end
     orig_ex = Expr(:inert, ex)
     ex = Expr(:block, __source__, esc(ex))
