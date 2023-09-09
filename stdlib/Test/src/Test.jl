@@ -781,7 +781,7 @@ The only two keyword arguments supported by `@test_throws` are `broken` and `ski
     * If `conda==false`, this is equivalent to regular `@test_throws exception expr`.
 * `skip=cond`:
     * If `cond==true`:
-        * Returns a `Skipped` `Result` and does not run the test.
+        * Returns a `Broken` `Result` and does not run the test.
     * If `cond==false`, this is equivalent to regular `@test_throws exception expr`.
 
 indicates a test that should pass but currently consistently
