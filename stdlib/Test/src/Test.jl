@@ -834,15 +834,19 @@ macro test_throws(extype, ex, kws...)
     orig_ex = Expr(:inert, ex)
     ex = Expr(:block, __source__, esc(ex))
     result = quote
-        try
-            Returned($ex, nothing, $(QuoteNode(__source__)))
-        catch _e
-            if $(esc(extype)) != InterruptException && _e isa InterruptException
-                rethrow()
+        if $(length(skip) > 0 && esc(skip[1]))
+            record(get_testset(), Broken(:skipped, $orig_ex))
+        else
+            try
+                Returned($ex, nothing, $(QuoteNode(__source__)))
+            catch _e
+                if $(esc(extype)) != InterruptException && _e isa InterruptException
+                    rethrow()
+                end
+                Threw(_e, Base.current_exceptions(), $(QuoteNode(__source__)))
             end
-            Threw(_e, Base.current_exceptions(), $(QuoteNode(__source__)))
+            do_test_throws($result, $orig_ex, $(esc(extype)))
         end
-        do_test_throws($result, $orig_ex, $(esc(extype)))
     end
     return result
 end
