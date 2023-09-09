@@ -842,8 +842,9 @@ macro test_throws(extype, ex, kws...)
             end
             Threw(_e, Base.current_exceptions(), $(QuoteNode(__source__)))
         end
+        do_test_throws($result, $orig_ex, $(esc(extype)))
     end
-    return :(do_test_throws($result, $orig_ex, $(esc(extype))))
+    return result
 end
 
 const MACROEXPAND_LIKE = Symbol.(("@macroexpand", "@macroexpand1", "macroexpand"))
