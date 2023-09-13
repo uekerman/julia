@@ -19,6 +19,7 @@
 #include "libsupport.h"
 #include <stdint.h>
 #include <string.h>
+#include <fenv.h>
 
 #include "htable.h"
 #include "arraylist.h"
@@ -2050,6 +2051,9 @@ typedef struct _jl_task_t {
     uint16_t priority;
 
 // hidden state:
+    // cached floating point environment
+    // only updated at task switch
+    fenv_t fenv;
 
 #ifdef USE_TRACY
     const char *name;
