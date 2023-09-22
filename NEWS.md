@@ -49,6 +49,8 @@ Standard library changes
 
 #### Random
 * `rand` now supports sampling over `Tuple` types ([#50251]).
+* Most random number generators from `Random` can now be seeded by a string, e.g.
+  `seed!(rng, "a random seed")` ([#51527]).
 
 * When seeding RNGs provided by `Random`, negative integer seeds can now be used ([#51416]).
 
