@@ -621,7 +621,28 @@ end
 # enable threads support
 @eval PCRE PCRE_COMPILE_LOCK = Threads.SpinLock()
 
+# stdlib shims
+let Random_PkgID = PkgId(UUID(0x9a3f8284_a2c9_5f02_9a11_845980a1fd5c), "Random")
+    global rand, randn
+
+    RANDOM_MODULE_REF = Ref{Module}()
+    # functions defined in Random
+    function rand(args...)
+        if !isassigned(RANDOM_MODULE_REF)
+            RANDOM_MODULE_REF[] = require(Random_PkgID)
+        end
+        invokelatest(rand, args...)
+    end
+
+    function randn(args...)
+        if !isassigned(RANDOM_MODULE_REF)
+            RANDOM_MODULE_REF[] = require(Random_PkgID)
+        end
+        invokelatest(randn, args...)
+    end
 end
+
+end # is_primary_base_module
 
 # Ensure this file is also tracked
 @assert !isassigned(_included_files, 1)

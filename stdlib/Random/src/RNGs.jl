@@ -386,12 +386,6 @@ for T in BitInteger_types
     @eval rand!(::_GLOBAL_RNG, A::Array{$T}, I::SamplerType{$T}) = rand!(default_rng(), A, I)
 end
 
-function __init__()
-    seed!(GLOBAL_RNG)
-    ccall(:jl_gc_init_finalizer_rng_state, Cvoid, ())
-end
-
-
 ### generation
 
 # MersenneTwister produces natively Float64
