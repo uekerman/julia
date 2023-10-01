@@ -626,7 +626,8 @@ let seed = rand(UInt32, 10)
     @test r.seed == seed && r.seed !== seed
     let r2 = Future.randjump(r, big(10)^20)
         Random.seed!(r2)
-        @test seed == r.seed != r2.seed
+        @test seed == r.seed
+        @test !isequal(r.seed, r2.seed)
     end
     resize!(seed, 4)
     @test r.seed != seed
@@ -648,6 +649,7 @@ end
         @test Random.seed!(m..., typemax(UInt)) === m2
         @test Random.seed!(m..., typemax(UInt128)) === m2
         @test Random.seed!(m..., "a random seed") === m2
+        @test Random.seed!(m..., Random.default_rng()) === m2
     end
 end
 
@@ -701,7 +703,7 @@ end
     @test rand(m, Int) ∉ (a, b, c, d)
 end
 
-@testset "$RNG(seed) & Random.seed!(m::$RNG, seed) produce the same stream" for RNG=(MersenneTwister,Xoshiro)
+@testset "$RNG(seed) & Random.seed!(m::$RNG, seed) produce the same stream" for RNG=(MersenneTwister, Xoshiro)
     seeds = Any[0, 1, 2, 10000, 10001, rand(UInt32, 8), randstring(), randstring(), rand(UInt128, 3)...]
     if RNG == Xoshiro
         push!(seeds, rand(UInt64, rand(1:4)))
@@ -712,6 +714,11 @@ end
         Random.seed!(m, seed)
         @test a == [rand(m) for _=1:100]
     end
+    # rng as a seed
+    m = RNG(Xoshiro(0))
+    a = [rand(m) for _=1:100]
+    Random.seed!(m, Xoshiro(0))
+    @test a == [rand(m) for _=1:100]
 end
 
 @testset "Random.seed!(seed) sets Random.GLOBAL_SEED" begin
@@ -933,6 +940,16 @@ end
         @test string(m) == """MersenneTwister("seed 1", (0, 1002, 0, 1))"""
         # test that MersenneTwister's fancy constructors accept string seeds
         @test MersenneTwister("seed 1", (0, 1002, 0, 1)) == m
+
+        # RNG seeds
+        xo = Xoshiro(0)
+        Random.seed!(m, xo)
+        # test that the seed shows as `missing`
+        @test string(m) == "MersenneTwister(missing)"
+        rand(m)
+        @test string(m) == "MersenneTwister(missing, (0, 1002, 0, 1))"
+        @test_throws MethodError MersenneTwister(missing)
+        @test_throws MethodError MersenneTwister(missing, (0, 1002, 0, 1))
     end
 
     @testset "RandomDevice" begin

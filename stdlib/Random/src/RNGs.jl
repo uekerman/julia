@@ -10,7 +10,7 @@ Create a `RandomDevice` RNG object.
 Two such objects will always generate different streams of random numbers.
 The entropy is obtained from the operating system.
 """
-struct RandomDevice <: AbstractRNG; end
+struct RandomDevice <: AbstractRNG end
 RandomDevice(seed::Nothing) = RandomDevice()
 seed!(rng::RandomDevice, ::Nothing) = rng
 
@@ -132,13 +132,14 @@ copy(src::MersenneTwister) =
 
 
 ==(r1::MersenneTwister, r2::MersenneTwister) =
-    r1.seed == r2.seed && r1.state == r2.state &&
+    # seeds need not be equal
+    r1.state == r2.state &&
     isequal(r1.vals, r2.vals) &&
     isequal(r1.ints, r2.ints) &&
     r1.idxF == r2.idxF && r1.idxI == r2.idxI
 
 hash(r::MersenneTwister, h::UInt) =
-    foldr(hash, (r.seed, r.state, r.vals, r.ints, r.idxF, r.idxI); init=h)
+    foldr(hash, (r.state, r.vals, r.ints, r.idxF, r.idxI); init=h)
 
 function show(io::IO, rng::MersenneTwister)
     # seed
@@ -329,7 +330,6 @@ function hash_seed(str::AbstractString)
     SHA.digest!(ctx)
 end
 
-
 """
     hash_seed(seed) -> AbstractVector{UInt8}
 
@@ -347,7 +347,7 @@ hash_seed
 
 #### seed!()
 
-function initstate!(r::MersenneTwister, data::StridedVector, seed)
+function initstate!(r::MersenneTwister, data::StridedVector, seed=missing)
     # we deepcopy `seed` because the caller might mutate it, and it's useful
     # to keep it constant inside `MersenneTwister`; but multiple instances
     # can share the same seed without any problem (e.g. in `copy`)
@@ -359,10 +359,12 @@ function initstate!(r::MersenneTwister, data::StridedVector, seed)
     return r
 end
 
+seed!(r::MersenneTwister, seeder::AbstractRNG) = initstate!(r, rand(seeder, UInt32, 8))
+
 # when a seed is not provided, we generate one via `RandomDevice()` in `random_seed()` rather
-# than calling directly `initstate!` with `rand(RandomDevice(), UInt32, whatever)` because the
-# seed is printed in `show(::MersenneTwister)`, so we need one; the cost of `hash_seed` is a
-# small overhead compared to `initstate!`, so this simple solution is fine
+# than calling directly `seed!(r, RandomDevice())` because the
+# seed is printed in `show(::MersenneTwister)`, so we prefer to have one; the cost of `hash_seed`
+# is a small overhead compared to `initstate!`, so this is probably worth it
 seed!(r::MersenneTwister, ::Nothing) = seed!(r, random_seed())
 seed!(r::MersenneTwister, seed) = initstate!(r, hash_seed(seed), seed)
 
